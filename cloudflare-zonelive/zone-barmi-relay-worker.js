@@ -20,7 +20,7 @@ const CORS_HEADERS = {
 };
 
 // رابط صفحة GitHub Pages الثابتة تبع Zone-BarMi (فيها current-stream.json يتحدّث تلقائيًا)
-const STATUS_URL = "https://ahmedtitr8-hash.github.io/Zone-BarMi/current-stream.json";
+const STATUS_URL = "https://ahmedtwi99-boop.github.io/Zone-BarMi/current-stream.json";
 
 // يجلب أي رابط (مانيفست أو مقطع) ويعيد بثّه — يكتشف نوع الرد من محتواه الفعلي (أول بايتات)
 // لا من امتداد الرابط، ويعيد كتابة أي رابط داخلي (بأي عمق: رئيسي ← فرعي ← مقطع) ليمر
