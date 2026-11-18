@@ -124,7 +124,7 @@ async function getSignedFileUrl(key) {
 const GH_PAT = process.env.GH_PAT || '';
 // كان يشاور على مستودع مختلف (milan-mini-app) بقيّة من قبل ما ينتقل transcode.yml
 // لهذا المستودع (Zone-BarMi) نفسه — لازم يطابق دايمًا اسم المستودع الحالي.
-const MINIAPP_REPO = 'ahmedtitr8-hash/Zone-BarMi';
+const MINIAPP_REPO = 'ahmedtwi99-boop/Zone-BarMi';
 const MINIAPP_WORKFLOW_FILE = 'transcode.yml';
 
 /** يقرأ رابط نفق Cloudflare الحالي (يكتبه ملف الـ workflow لحظة توفره) */
