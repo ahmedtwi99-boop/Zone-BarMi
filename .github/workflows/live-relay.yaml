@@ -124,7 +124,7 @@ jobs:
 
       - name: Notify Telegram
         run: |
-          MSG=$'✅ الأكشن شغّال الآن.\n\n🌐 لوحة التحكم الدائمة (استخدم هذي):\nhttps://ahmedtitr8-hash.github.io/Zone-BarMi/\n\nرابط النفق المؤقت (للمرجع فقط): '"${{ env.TUNNEL_URL }}"
+          MSG=$'✅ الأكشن شغّال الآن.\n\n🌐 لوحة التحكم الدائمة (استخدم هذي):\nhttps://ahmedtwi99-boop.github.io/Zone-BarMi/\n\nرابط النفق المؤقت (للمرجع فقط): '"${{ env.TUNNEL_URL }}"
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
             -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
             --data-urlencode "text=$MSG"
