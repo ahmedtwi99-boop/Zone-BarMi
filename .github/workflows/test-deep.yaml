@@ -1,0 +1,48 @@
+name: Test Deep
+
+# اختبار عميق: هل المصدر يشتغل من الأكشن؟ وهل اللي يجي بث حقيقي ولا شاشة انتظار؟
+# يجرّب أشكال الهيدرز (Origin/Referer)، كل الجودات، المقاطع والصوت، ويقارن لقطات الفيديو.
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'رابط الماستر الكامل (m3u8 أو mpd)'
+        required: true
+      ref:
+        description: 'ريفرك، يُرسل كـ Referer و Origin (مثال https://live.xn----zmcaegc7cl3msazv.com/)'
+        required: false
+      out_url:
+        description: 'اختياري: الرابط اللي تطلعه اللوحة/النفق، لمقارنة المسار الحقيقي'
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: ffmpeg
+        run: command -v ffmpeg >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
+      - name: Test
+        env:
+          URL_TEST: ${{ inputs.url }}
+          REF: ${{ inputs.ref }}
+          OUT_URL: ${{ inputs.out_url }}
+          FRAMES_DIR: frames
+        run: |
+          echo "::add-mask::$URL_TEST"
+          [ -n "$OUT_URL" ] && echo "::add-mask::$OUT_URL"
+          node test-deep.js
+      - name: Upload frames
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frames
+          path: frames/*.jpg
+          if-no-files-found: ignore
+          retention-days: 3
