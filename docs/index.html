@@ -663,12 +663,11 @@ async function apiCall(path, opts = {}){
 
 // ---------------- أكشن التسجيل المستقل (نفق وسيرفر خاص بقسم التسجيل) ----------------
 async function getRecorderUrl(){
-  let res = await fetch('./recorder-stream.json?_=' + Date.now(), { cache: 'no-store' });
-  if (!res.ok) {          // على سيرفر ثابت (VPS) التسجيل يشتغل على نفس السيرفر، فنستخدم رابطه
-    const cur = await fetch('./current-stream.json?_=' + Date.now(), { cache: 'no-store' }).catch(() => null);
-    const cd = cur && cur.ok ? await cur.json().catch(() => null) : null;
-    if (cd && cd.permanent) return cd.panelUrl;
-  }
+  // على سيرفر ثابت (VPS) التسجيل يشتغل على نفس السيرفر، فنستخدم رابطه أولاً (حتى لو فيه ملف recorder قديم من الأكشن)
+  const cur = await fetch('./current-stream.json?_=' + Date.now(), { cache: 'no-store' }).catch(() => null);
+  const cd = cur && cur.ok ? await cur.json().catch(() => null) : null;
+  if (cd && cd.permanent && cd.panelUrl) return cd.panelUrl;
+  const res = await fetch('./recorder-stream.json?_=' + Date.now(), { cache: 'no-store' });
   if (!res.ok) throw new Error('أكشن التسجيل مو شغّال. شغّله من البوت (زر "تشغيل أكشن التسجيل") وانتظر إشعار الجاهزية.');
   const data = await res.json();
   const ageMinutes = (Date.now() - new Date(data.startedAt).getTime()) / 60000;
