@@ -94,18 +94,36 @@ jobs:
 
       - name: Start tunnels
         run: |
-          nohup ./cloudflared tunnel --url http://localhost:3100 > cf-api.log 2>&1 &
-          nohup ./cloudflared tunnel --url http://localhost:6080 > cf-screen.log 2>&1 &
-          for i in $(seq 1 40); do
-            API=$(grep -o 'https://[a-zA-Z0-9.-]*\.trycloudflare\.com' cf-api.log | head -n1)
-            SCR=$(grep -o 'https://[a-zA-Z0-9.-]*\.trycloudflare\.com' cf-screen.log | head -n1)
-            if [ -n "$API" ] && [ -n "$SCR" ]; then
-              echo "LAB_API=$API" >> $GITHUB_ENV
-              echo "LAB_SCREEN=$SCR" >> $GITHUB_ENV
-              break
-            fi
-            sleep 2
-          done
+          start_tunnel() {
+            # $1=اسم السجل  $2=البورت  — يعيد المحاولة 3 مرات ويتجاهل api.trycloudflare.com
+            local log="$1" port="$2" url=""
+            for attempt in 1 2 3; do
+              : > "$log"
+              nohup ./cloudflared tunnel --no-autoupdate --protocol http2 --url "http://localhost:$port" > "$log" 2>&1 &
+              local pid=$!
+              for i in $(seq 1 30); do
+                url=$(grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' "$log" | grep -v '^https://api\.' | head -n1)
+                [ -n "$url" ] && break
+                sleep 2
+              done
+              [ -n "$url" ] && break
+              echo "محاولة $attempt لنفق $port فشلت، أعيد التشغيل" >&2
+              tail -n 15 "$log" >&2 || true
+              kill "$pid" 2>/dev/null || true
+              sleep 5
+            done
+            echo "$url"
+          }
+          API=$(start_tunnel cf-api.log 3100 | tail -n1)
+          SCR=$(start_tunnel cf-screen.log 6080 | tail -n1)
+          if [ -z "$API" ] || [ -z "$SCR" ]; then
+            echo "::error::ما انفتحت أنفاق كلاودفلير (API='$API' SCREEN='$SCR')"
+            exit 1
+          fi
+          echo "LAB_API=$API" >> $GITHUB_ENV
+          echo "LAB_SCREEN=$SCR" >> $GITHUB_ENV
+          echo "API: $API"
+          echo "SCREEN: $SCR"
 
       - name: Publish pointer and notify
         env:
