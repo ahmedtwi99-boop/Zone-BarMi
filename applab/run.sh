@@ -53,6 +53,14 @@ adb shell "iptables -I OUTPUT -p udp --dport 443 -j REJECT" >/dev/null 2>&1 || t
 # 4) كل الاتصال يمر على mitmproxy (10.0.2.2 = جهاز الأكشن من داخل المحاكي)
 adb shell settings put global http_proxy 10.0.2.2:8080
 
+# 4.5) إخفاء الروت: نغطي su بملف فاضي ونرجع adbd بدون صلاحية روت (بعد ما خلصنا كل شي يحتاج روت)
+adb shell "for f in /system/xbin/su /system/bin/su /sbin/su; do [ -e \$f ] && mount -o bind /dev/null \$f; done" >/dev/null 2>&1 || true
+adb unroot >/dev/null 2>&1; sleep 3; adb wait-for-device
+# adb unroot يقتل جلسة logcat القديمة، نعيد تشغيلها
+nohup adb logcat -v time >> $L/logcat.txt 2>&1 &
+ROOTCHK=$(adb shell id 2>/dev/null | tr -d '\r')
+tg "🫥 App Lab: بعد إخفاء الروت: $ROOTCHK"
+
 fit_window
 state ready "الجهاز جاهز"
 tg "✅ App Lab جاهز. افتح الصفحة وتبويب (جهاز) وارفع التطبيق."
