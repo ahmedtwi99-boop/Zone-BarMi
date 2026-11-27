@@ -1,9 +1,9 @@
-// سيرفر App Lab: رفع APK وتثبيته على الجهاز الافتراضي + عرض الروابط المرصودة.
+// سيرفر App Lab: رفع APK / XAPK / APKS / APKM وتثبيته على الجهاز الافتراضي + عرض الروابط المرصودة.
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 
 const KEY = process.env.API_KEY || '';
 const VNCPASS = process.env.VNCPASS || '';
@@ -32,6 +32,85 @@ async function launch(pkg) {
 function readState() {
   try { return JSON.parse(fs.readFileSync(path.join(L, 'state.json'), 'utf8')); }
   catch (e) { return { stage: 'starting', detail: '' }; }
+}
+
+// ===== الحزم المقسمة (XAPK / APKS / APKM) =====
+// كلها ملفات zip فيها أكثر من APK (وأحيانًا ملفات OBB). نعرف النوع من محتوى الملف مو من امتداده.
+function unzipList(file) {
+  return new Promise((resolve) => {
+    execFile('unzip', ['-Z1', file], { timeout: 60000, maxBuffer: 20 * 1024 * 1024 }, (e, out) => {
+      resolve(e ? null : out.split('\n').filter(Boolean));
+    });
+  });
+}
+// نطلع ملف واحد من الـ zip لمسار نختاره حنا (أسماء الملفات اللي داخل الحزمة ما تتحكم بمكان الكتابة)
+function unzipEntry(file, entry, dest) {
+  return new Promise((resolve, reject) => {
+    const pattern = entry.replace(/[\[\]*?\\]/g, '\\$&');
+    const p = spawn('unzip', ['-p', file, pattern], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 180000 });
+    const w = fs.createWriteStream(dest);
+    let code = null, closed = false;
+    const done = () => {
+      if (code === null || !closed) return;
+      if (code === 0) resolve(); else reject(new Error('ما قدرت أفك ' + entry));
+    };
+    p.on('error', reject);
+    w.on('error', (e) => { p.kill(); reject(e); });
+    w.on('close', () => { closed = true; done(); });
+    p.on('close', (c) => { code = c === null ? -1 : c; done(); });
+    p.stdout.pipe(w);
+  });
+}
+// الحزمة ممكن تحتوي أكثر من معالج: نختار واحد بس، الأنسب للجهاز الافتراضي (x86_64)
+const ABI_RE = /(?:^|[._-])(x86_64|x86|arm64_v8a|armeabi_v7a|armeabi|mips64|mips)\.apk$/i;
+const ABI_ORDER = ['x86_64', 'x86', 'arm64_v8a', 'armeabi_v7a', 'armeabi'];
+function pickApks(entries) {
+  let apks = entries.filter((n) => /\.apk$/i.test(n));
+  // صيغة bundletool: مجلد splits/ هو المطلوب، و standalones/ نسخ بديلة تتعارض معه
+  const splits = apks.filter((n) => /^splits\//.test(n));
+  if (splits.length) apks = splits;
+  const universal = apks.find((n) => /(^|\/)universal\.apk$/i.test(n));
+  if (universal) return [universal];
+  const abiOf = (n) => { const m = path.posix.basename(n).match(ABI_RE); return m ? m[1].toLowerCase() : ''; };
+  const abis = apks.map(abiOf).filter(Boolean);
+  if (!abis.length) return apks;
+  const best = ABI_ORDER.find((a) => abis.includes(a));
+  return apks.filter((n) => !abiOf(n) || abiOf(n) === best);
+}
+async function preparePackage(file, dir) {
+  const entries = await unzipList(file);
+  if (!entries) throw new Error('الملف تالف أو ناقص (مو ملف تطبيق صالح). حمّله من جديد وأعد الرفع.');
+  if (entries.includes('AndroidManifest.xml')) return { apks: [file], obbs: [], pkg: '' };
+  const wanted = pickApks(entries.filter((n) => !n.startsWith('-')));
+  if (!wanted.length) throw new Error('ما لقيت أي APK داخل الملف.');
+  fs.mkdirSync(dir, { recursive: true });
+  const apks = [];
+  for (let i = 0; i < wanted.length; i++) {
+    const dest = path.join(dir, i + '.apk');
+    await unzipEntry(file, wanted[i], dest);
+    apks.push(dest);
+  }
+  const obbs = [];
+  for (const n of entries) {
+    const m = n.match(/^Android\/obb\/([A-Za-z0-9._]+)\/([A-Za-z0-9._-]+\.obb)$/);
+    if (!m) continue;
+    const dest = path.join(dir, 'obb' + obbs.length);
+    await unzipEntry(file, n, dest);
+    obbs.push({ file: dest, pkg: m[1], name: m[2] });
+  }
+  // اسم الحزمة من manifest.json (XAPK) أو info.json (APKM)
+  let pkg = '';
+  const meta = ['manifest.json', 'info.json'].find((n) => entries.includes(n));
+  if (meta) {
+    try {
+      const dest = path.join(dir, 'meta.json');
+      await unzipEntry(file, meta, dest);
+      const j = JSON.parse(fs.readFileSync(dest, 'utf8'));
+      const p = String(j.package_name || j.pname || '');
+      if (/^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)+$/.test(p)) pkg = p;
+    } catch (e) {}
+  }
+  return { apks, obbs, pkg };
 }
 
 const app = express();
@@ -75,8 +154,14 @@ app.post('/api/lab/install', express.json(), async (req, res) => {
   const file = path.join(UP, id + '.apk');
   if (!/^[a-z0-9]{6,40}$/.test(id) || !fs.existsSync(file)) return res.status(400).json({ error: 'ما لقيت الملف المرفوع.' });
   if (readState().stage !== 'ready') return res.status(409).json({ error: 'الجهاز لسا يتجهز، انتظر لين يصير جاهز.' });
+  const dir = path.join(UP, id + '.d');
+  const cleanup = () => { fs.rmSync(file, { force: true }); fs.rmSync(dir, { recursive: true, force: true }); };
+  let bundle;
+  try { bundle = await preparePackage(file, dir); }
+  catch (e) { cleanup(); return res.status(400).json({ error: 'فشل التثبيت: ' + e.message }); }
   const before = await thirdParty();
-  let r = await adb(['install', '-r', '-g', '-t', file], 300000);
+  const cmd = [bundle.apks.length > 1 ? 'install-multiple' : 'install', '-r', '-g', '-t', ...bundle.apks];
+  let r = await adb(cmd, 300000);
   let knownPkg = '';
   // نسخة قديمة بتوقيع مختلف: نحذفها ونعيد التثبيت
   if (/INSTALL_FAILED_UPDATE_INCOMPATIBLE|INSTALL_FAILED_VERSION_DOWNGRADE/.test(r.out)) {
@@ -84,22 +169,33 @@ app.post('/api/lab/install', express.json(), async (req, res) => {
     if (m) {
       knownPkg = m[1];
       await adb(['uninstall', knownPkg]);
-      r = await adb(['install', '-r', '-g', '-t', file], 300000);
+      r = await adb(cmd, 300000);
     }
   }
-  fs.unlink(file, () => {});
-  if (!/Success/i.test(r.out)) {
+  const installed = /Success/i.test(r.out);
+  // ملفات OBB (بيانات إضافية لبعض التطبيقات) تنسخ لمكانها بعد التثبيت
+  let obbFailed = 0;
+  if (installed) {
+    for (const o of bundle.obbs) {
+      const target = '/sdcard/Android/obb/' + o.pkg;
+      await adb(['shell', 'mkdir', '-p', target]);
+      if (!(await adb(['push', o.file, target + '/' + o.name], 300000)).ok) obbFailed++;
+    }
+  }
+  cleanup();
+  if (!installed) {
     let hint = '';
     if (/NO_MATCHING_ABIS/.test(r.out)) hint = ' التطبيق ما يدعم معالج الجهاز الافتراضي (x86_64)، غالبًا نسخته ARM فقط.';
     if (/INSTALL_FAILED_OLDER_SDK/.test(r.out)) hint = ' التطبيق يحتاج أندرويد أحدث من نسخة الجهاز (11).';
+    if (/INSTALL_FAILED_MISSING_SPLIT/.test(r.out)) hint = ' التطبيق مقسم لأكثر من ملف، ارفع نسخة XAPK أو APKS كاملة.';
     return res.status(400).json({ error: 'فشل التثبيت: ' + r.out.slice(0, 300) + hint });
   }
   const after = await thirdParty();
   const added = after.filter((p) => !before.includes(p));
-  const pkg = knownPkg || added[0] || after[after.length - 1] || '';
+  const pkg = knownPkg || (after.includes(bundle.pkg) ? bundle.pkg : '') || added[0] || after[after.length - 1] || '';
   let launched = false;
   if (pkg) launched = (await launch(pkg)).ok;
-  res.json({ ok: true, package: pkg, launched });
+  res.json({ ok: true, package: pkg, launched, parts: bundle.apks.length, obbFailed });
 });
 
 app.get('/api/lab/apps', async (_req, res) => res.json({ apps: await thirdParty() }));
